@@ -18,12 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "pid.h"
 #include "mdds30.h"
 #include "DC_MOTOR_cfg.h"
+#include "usbd_cdc_if.h"
 
 /* USER CODE END Includes */
 
@@ -42,7 +44,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
@@ -53,11 +54,10 @@ TIM_HandleTypeDef htim4;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MPU_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
-static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -66,13 +66,17 @@ static void MX_TIM2_Init(void);
 /* USER CODE BEGIN 0 */
 
 
-
 float LPF_beta = 0.025;
 int sample_time = 20;
 
 // -- ignore on release
+int linear_x_rec = 0;
+int angular_z_rec = 0;
+
 float linear_x = 0;
 float angular_z = 0;
+
+
 
 float linear_x_now = 0;
 float angular_z_now = 0;
@@ -87,7 +91,7 @@ int left_Kd = 0;
 double left_SpeedCurrent, left_PIDOut, left_SpeedSetpoint;
 
 int16_t left_pulses = 0;
-int left_ppms = 0;
+int8_t left_ppms = 0;
 
 float left_sppms = 0;
 
@@ -103,7 +107,7 @@ int right_Kd = 0;
 double right_SpeedCurrent, right_PIDOut, right_SpeedSetpoint;
 
 int16_t right_pulses = 0;
-int right_ppms = 0;
+int8_t right_ppms = 0;
 
 float right_sppms = 0;
 
@@ -115,8 +119,9 @@ int GetSpeedRight(){ return right_sppms; }
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-	left_pulses = (int16_t)__HAL_TIM_GET_COUNTER(&htim3)/4;
-	right_pulses = -(int16_t)__HAL_TIM_GET_COUNTER(&htim4)/4;
+	left_pulses = -(int16_t)__HAL_TIM_GET_COUNTER(&htim2)/4;
+	right_pulses = -(int16_t)__HAL_TIM_GET_COUNTER(&htim3)/4;
+
 
 }
 
@@ -133,6 +138,12 @@ void setWheelVelocity(float lnr_x, float ang_z, float r, double *left_vel, doubl
 }
 
 
+
+
+
+
+ uint8_t sen_buff[8];
+ uint8_t rec_buff[100];
 /* USER CODE END 0 */
 
 /**
@@ -144,9 +155,6 @@ int main(void)
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
-
-  /* MPU Configuration--------------------------------------------------------*/
-  MPU_Config();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -166,32 +174,40 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM4_Init();
-  MX_TIM2_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
 
   // Left Motor
 
-    DC_MOTOR_Init(DC_MOTOR_CfgParam[0]);
+  DC_MOTOR_Init(DC_MOTOR_CfgParam[0]);
 
-    HAL_TIM_Encoder_Start_IT(&htim3, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start_IT(&htim2, TIM_CHANNEL_ALL);
 
-    PID(&left_SPID, &left_SpeedCurrent, &left_PIDOut, &left_SpeedSetpoint, left_Kp, left_Ki, left_Kd, _PID_P_ON_E, _PID_CD_DIRECT);
-    PID_SetMode(&left_SPID, _PID_MODE_AUTOMATIC);
-    PID_SetSampleTime(&left_SPID, 500);
-    PID_SetOutputLimits(&left_SPID, -65534, 65534);
+  PID(&left_SPID, &left_SpeedCurrent, &left_PIDOut, &left_SpeedSetpoint, left_Kp, left_Ki, left_Kd, _PID_P_ON_E, _PID_CD_DIRECT);
+  PID_SetMode(&left_SPID, _PID_MODE_AUTOMATIC);
+  PID_SetSampleTime(&left_SPID, 500);
+  PID_SetOutputLimits(&left_SPID, -65534, 65534);
 
-    // Right Motor
+  // Right Motor
 
-    DC_MOTOR_Init(DC_MOTOR_CfgParam[1]);
+  DC_MOTOR_Init(DC_MOTOR_CfgParam[1]);
 
-    HAL_TIM_Encoder_Start_IT(&htim4, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start_IT(&htim3, TIM_CHANNEL_ALL);
 
-    PID(&right_SPID, &right_SpeedCurrent, &right_PIDOut, &right_SpeedSetpoint, right_Kp, right_Ki, right_Kd, _PID_P_ON_E, _PID_CD_DIRECT);
-    PID_SetMode(&right_SPID, _PID_MODE_AUTOMATIC);
-    PID_SetSampleTime(&right_SPID, 500);
-    PID_SetOutputLimits(&right_SPID, -65534, 65534);
+  PID(&right_SPID, &right_SpeedCurrent, &right_PIDOut, &right_SpeedSetpoint, right_Kp, right_Ki, right_Kd, _PID_P_ON_E, _PID_CD_DIRECT);
+  PID_SetMode(&right_SPID, _PID_MODE_AUTOMATIC);
+  PID_SetSampleTime(&right_SPID, sample_time);
+  PID_SetOutputLimits(&right_SPID, -65534, 65534);
+
+  //USB Init
+
+  vcp_init();
+
+
+
 
   /* USER CODE END 2 */
 
@@ -202,47 +218,133 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  //Converting from into to float
+
+	  linear_x = linear_x_rec/100;
+	  angular_z = angular_z_rec/100;
 
 	  // --ignore in final
 
-	  	  if ( (left_Kp != PID_GetKp(&left_SPID)) | (left_Ki != PID_GetKi(&left_SPID)) | (left_Kd != PID_GetKd(&left_SPID))){
-	  	  	 	PID_SetTunings(&left_SPID, left_Kp, left_Ki, left_Kd);
-	  	  	 }
-	  	  if ( (right_Kp != PID_GetKp(&right_SPID)) | (right_Ki != PID_GetKi(&right_SPID)) | (right_Kd != PID_GetKd(&right_SPID))){
-	  	  	 	PID_SetTunings(&right_SPID, right_Kp, right_Ki, right_Kd);
-	  	  	 }
+	  if ( (left_Kp != PID_GetKp(&left_SPID)) | (left_Ki != PID_GetKi(&left_SPID)) | (left_Kd != PID_GetKd(&left_SPID))){
+	  	 	PID_SetTunings(&left_SPID, left_Kp, left_Ki, left_Kd);
+	  	 }
+	  if ( (right_Kp != PID_GetKp(&right_SPID)) | (right_Ki != PID_GetKi(&right_SPID)) | (right_Kd != PID_GetKd(&right_SPID))){
+	  	 	PID_SetTunings(&right_SPID, right_Kp, right_Ki, right_Kd);
+	  	 }
 
-	  	  // Low Pass Filter
+	  // Low Pass Filter
 
-	  	  left_sppms = left_sppms - (LPF_beta *(left_sppms-left_ppms));
-	  	  right_sppms = right_sppms - (LPF_beta *(right_sppms-right_ppms));
+	  left_sppms = left_sppms - (LPF_beta *(left_sppms-left_ppms));
+	  right_sppms = right_sppms - (LPF_beta *(right_sppms-right_ppms));
 
-	  	  // Get Wheel Velocities
+	  // Get Wheel Velocities
 
-	  	  setWheelVelocity(linear_x, angular_z, 0.355, &left_SpeedSetpoint, &right_SpeedSetpoint);
+	  setWheelVelocity(linear_x, angular_z, 0.355, &left_SpeedSetpoint, &right_SpeedSetpoint);
 
-	  	  // PID
+	  // PID
 
-	  	  left_SpeedCurrent = GetSpeedLeft();
-	  	  right_SpeedCurrent = GetSpeedRight();
+	  left_SpeedCurrent = GetSpeedLeft();
+	  right_SpeedCurrent = GetSpeedRight();
 
-	  	  PID_Compute(&left_SPID);
-	  	  PID_Compute(&right_SPID);
+	  PID_Compute(&left_SPID);
+	  PID_Compute(&right_SPID);
 
-	  	  // Current speed
+	  // Current speed
 
-	  	  linear_x_now = (right_sppms + left_sppms)*(0.1651/2)*(2*3.14/1196);
-	  	  angular_z_now = (right_sppms - left_sppms)*(0.1651/0.355)*(2*3.14/1196);
+	  linear_x_now = (right_sppms + left_sppms)*(0.1651/2)*(2*3.14/1196);
+	  angular_z_now = (right_sppms - left_sppms)*(0.1651/0.355)*(2*3.14/1196);
 
-	  	  // Motors
+	  // Motors
 
-	  	  DC_MOTOR_Start( DC_MOTOR_CfgParam[0],
-	  			  	  	  left_PIDOut < 0 ? DIR_ACW : DIR_CW,
-	  					  left_PIDOut < 0 ? -left_PIDOut : left_PIDOut);
+	  DC_MOTOR_Start( DC_MOTOR_CfgParam[0],
+			  	  	  left_PIDOut < 0 ? DIR_ACW : DIR_CW,
+					  left_PIDOut < 0 ? -left_PIDOut : left_PIDOut);
 
-	  	  DC_MOTOR_Start( DC_MOTOR_CfgParam[1],
-	  			  	  	  right_PIDOut < 0 ? DIR_ACW : DIR_CW,
-	  			  	  	  right_PIDOut < 0 ? -right_PIDOut : right_PIDOut);
+	  DC_MOTOR_Start( DC_MOTOR_CfgParam[1],
+			  	  	  right_PIDOut < 0 ? DIR_ACW : DIR_CW,
+			  	  	  right_PIDOut < 0 ? -right_PIDOut : right_PIDOut);
+
+if(right_ppms==0 && left_ppms ==0){
+			char packet[5];
+		   sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
+
+		    sen_buff[0] = (uint8_t)0;
+		    sen_buff[1] = (uint8_t)0;
+		    sen_buff[2] = (uint8_t)0;
+			sen_buff[3] = (uint8_t) packet[0];
+			sen_buff[4] = (uint8_t) packet[1];
+			sen_buff[5] = (uint8_t) packet[2];
+			sen_buff[6] = (uint8_t) packet[3];
+			sen_buff[7] = (uint8_t) packet[4];
+			sen_buff[8] = (uint8_t) packet[5];
+}
+else if((right_ppms>=0 && left_ppms>0) || (right_ppms>0 && left_ppms>=0) ){
+	  char packet[6];
+	  sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
+
+	    sen_buff[0] = (uint8_t)0;
+	    sen_buff[1] = (uint8_t)0;
+	    sen_buff[2] = (uint8_t)packet[0];
+		sen_buff[3] = (uint8_t) packet[1];
+		sen_buff[4] = (uint8_t) packet[2];
+		sen_buff[5] = (uint8_t) packet[3];
+		sen_buff[6] = (uint8_t) packet[4];
+		sen_buff[7] = (uint8_t) packet[5];
+		sen_buff[8] = (uint8_t) packet[6];
+
+
+}
+
+else if(right_ppms<0 && left_ppms<0){
+	  char packet[8];
+	  sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
+
+
+		sen_buff[0] = (uint8_t) packet[0];
+		sen_buff[1] = (uint8_t) packet[1];
+		sen_buff[2] = (uint8_t) packet[2];
+		sen_buff[3] = (uint8_t) packet[3];
+		sen_buff[4] = (uint8_t) packet[4];
+		sen_buff[5] = (uint8_t) packet[5];
+		sen_buff[6] = (uint8_t) packet[6];
+		sen_buff[7] = (uint8_t) packet[7];
+		sen_buff[8] = (uint8_t) packet[8];
+
+}
+
+else {
+	 char packet[7];
+	 sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
+
+
+			sen_buff[0] = (uint8_t) 0;
+			sen_buff[1] = (uint8_t) packet[0];
+			sen_buff[2] = (uint8_t) packet[1];
+			sen_buff[3] = (uint8_t) packet[2];
+			sen_buff[4] = (uint8_t) packet[3];
+			sen_buff[5] = (uint8_t) packet[4];
+			sen_buff[6] = (uint8_t) packet[5];
+			sen_buff[7] = (uint8_t) packet[6];
+			sen_buff[8] = (uint8_t) packet[7];
+
+
+}
+
+
+
+      char rec_buff[100];
+	  sscanf(rec_buff,"%d,%d\n",&linear_x_rec,&angular_z_rec);
+
+
+
+
+	  vcp_recv((uint8_t *)&rec_buff,sizeof(rec_buff));
+
+	  vcp_send(
+			  (uint8_t *)&sen_buff,
+			  sizeof(sen_buff)
+			  );
+
 
   }
   /* USER CODE END 3 */
@@ -256,32 +358,19 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-
-  /** Configure the main internal regulator output voltage
-  */
-  __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 216;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Activate the Over-Drive mode
-  */
-  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
   {
     Error_Handler();
   }
@@ -292,10 +381,16 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL_DIV1_5;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
@@ -313,8 +408,8 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 0 */
 
+  TIM_Encoder_InitTypeDef sConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
 
@@ -322,10 +417,19 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 4294967295;
+  htim2.Init.Period = 65535;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim2, &sConfig) != HAL_OK)
   {
     Error_Handler();
   }
@@ -335,22 +439,9 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
-  HAL_TIM_MspPostInit(&htim2);
 
 }
 
@@ -415,8 +506,8 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 0 */
 
-  TIM_Encoder_InitTypeDef sConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM4_Init 1 */
 
@@ -427,16 +518,7 @@ static void MX_TIM4_Init(void)
   htim4.Init.Period = 65535;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
-  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
-  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
-  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
-  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
-  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
-  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 0;
-  if (HAL_TIM_Encoder_Init(&htim4, &sConfig) != HAL_OK)
+  if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -446,9 +528,22 @@ static void MX_TIM4_Init(void)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM4_Init 2 */
 
   /* USER CODE END TIM4_Init 2 */
+  HAL_TIM_MspPostInit(&htim4);
 
 }
 
@@ -459,58 +554,21 @@ static void MX_TIM4_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2|GPIO_PIN_3, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : PA2 PA3 */
-  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_3;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
-
-/* MPU Configuration */
-
-void MPU_Config(void)
-{
-  MPU_Region_InitTypeDef MPU_InitStruct = {0};
-
-  /* Disables the MPU */
-  HAL_MPU_Disable();
-
-  /** Initializes and configures the Region and the memory to be protected
-  */
-  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
-  MPU_InitStruct.Number = MPU_REGION_NUMBER0;
-  MPU_InitStruct.BaseAddress = 0x0;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_4GB;
-  MPU_InitStruct.SubRegionDisable = 0x87;
-  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
-  MPU_InitStruct.AccessPermission = MPU_REGION_NO_ACCESS;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
-  /* Enables the MPU */
-  HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
-
-}
 
 /**
   * @brief  This function is executed in case of error occurrence.
