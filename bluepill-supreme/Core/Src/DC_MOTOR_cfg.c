@@ -13,7 +13,7 @@ const DC_MOTOR_CfgType DC_MOTOR_CfgParam[]=
 
 		{
 				GPIOB,
-				GPIO_PIN_5,
+				GPIO_PIN_4,
 				TIM4,
 				TIM_CHANNEL_1,
 				36,
@@ -23,7 +23,7 @@ const DC_MOTOR_CfgType DC_MOTOR_CfgParam[]=
 		},
 		{
 						GPIOB,
-						GPIO_PIN_4,
+						GPIO_PIN_5,
 						TIM4,
 						TIM_CHANNEL_2,
 						36,

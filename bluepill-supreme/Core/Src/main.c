@@ -65,9 +65,13 @@ static void MX_TIM4_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+char sen_buff[8];
+char rec_buff[100];
 
 float LPF_beta = 0.025;
 int sample_time = 20;
+
+int speed_const =1550;
 
 // -- ignore on release
 int linear_x_rec = 0;
@@ -76,19 +80,14 @@ int angular_z_rec = 0;
 float linear_x = 0;
 float angular_z = 0;
 
-
-
-float linear_x_now = 0;
-float angular_z_now = 0;
-
 // Left Motor
 
 PID_TypeDef left_SPID;
-int left_Kp = 0;
+int left_Kp = 2000;
 int left_Ki = 0;
 int left_Kd = 0;
 
-double left_SpeedCurrent, left_PIDOut, left_SpeedSetpoint;
+double left_SpeedCurrent, left_PIDOut, left_SpeedSetpoint, left_pwm;
 
 int16_t left_pulses = 0;
 int8_t left_ppms = 0;
@@ -100,11 +99,11 @@ int GetSpeedLeft(){ return left_sppms; }
 // Right Motor
 
 PID_TypeDef right_SPID;
-int right_Kp = 0;
+int right_Kp = 2000;
 int right_Ki = 0;
 int right_Kd = 0;
 
-double right_SpeedCurrent, right_PIDOut, right_SpeedSetpoint;
+double right_SpeedCurrent, right_PIDOut, right_SpeedSetpoint, right_pwm;
 
 int16_t right_pulses = 0;
 int8_t right_ppms = 0;
@@ -119,9 +118,8 @@ int GetSpeedRight(){ return right_sppms; }
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-	left_pulses = -(int16_t)__HAL_TIM_GET_COUNTER(&htim2)/4;
+	left_pulses = (int16_t)__HAL_TIM_GET_COUNTER(&htim2)/4;
 	right_pulses = -(int16_t)__HAL_TIM_GET_COUNTER(&htim3)/4;
-
 
 }
 
@@ -130,10 +128,8 @@ void setWheelVelocity(float lnr_x, float ang_z, float r, double *left_vel, doubl
 
 	// r is in m
 
-
-
-	*left_vel = (lnr_x - (r*ang_z))*1.1542*sample_time/100;
-	*right_vel = (lnr_x + (r*ang_z))*1.1542*sample_time/100;
+	*left_vel = (lnr_x - (r*ang_z)) * ( 1196 * sample_time / (1000 * 2 * 3.14 * r) );
+	*right_vel = (lnr_x + (r*ang_z)) * ( 1196 * sample_time / (1000 * 2 * 3.14 * r) );
 
 }
 
@@ -142,8 +138,6 @@ void setWheelVelocity(float lnr_x, float ang_z, float r, double *left_vel, doubl
 
 
 
- uint8_t sen_buff[8];
- uint8_t rec_buff[100];
 /* USER CODE END 0 */
 
 /**
@@ -177,6 +171,7 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM4_Init();
+
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
 
@@ -188,7 +183,7 @@ int main(void)
 
   PID(&left_SPID, &left_SpeedCurrent, &left_PIDOut, &left_SpeedSetpoint, left_Kp, left_Ki, left_Kd, _PID_P_ON_E, _PID_CD_DIRECT);
   PID_SetMode(&left_SPID, _PID_MODE_AUTOMATIC);
-  PID_SetSampleTime(&left_SPID, 500);
+  PID_SetSampleTime(&left_SPID, sample_time);
   PID_SetOutputLimits(&left_SPID, -65534, 65534);
 
   // Right Motor
@@ -220,17 +215,9 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	  //Converting from into to float
 
-	  linear_x = linear_x_rec/100;
-	  angular_z = angular_z_rec/100;
+	  linear_x = (float) linear_x_rec/100;
+	  angular_z = (float) angular_z_rec/100;
 
-	  // --ignore in final
-
-	  if ( (left_Kp != PID_GetKp(&left_SPID)) | (left_Ki != PID_GetKi(&left_SPID)) | (left_Kd != PID_GetKd(&left_SPID))){
-	  	 	PID_SetTunings(&left_SPID, left_Kp, left_Ki, left_Kd);
-	  	 }
-	  if ( (right_Kp != PID_GetKp(&right_SPID)) | (right_Ki != PID_GetKi(&right_SPID)) | (right_Kd != PID_GetKd(&right_SPID))){
-	  	 	PID_SetTunings(&right_SPID, right_Kp, right_Ki, right_Kd);
-	  	 }
 
 	  // Low Pass Filter
 
@@ -239,7 +226,7 @@ int main(void)
 
 	  // Get Wheel Velocities
 
-	  setWheelVelocity(linear_x, angular_z, 0.355, &left_SpeedSetpoint, &right_SpeedSetpoint);
+	  setWheelVelocity(linear_x, angular_z, 0.165, &left_SpeedSetpoint, &right_SpeedSetpoint);
 
 	  // PID
 
@@ -249,101 +236,35 @@ int main(void)
 	  PID_Compute(&left_SPID);
 	  PID_Compute(&right_SPID);
 
-	  // Current speed
 
-	  linear_x_now = (right_sppms + left_sppms)*(0.1651/2)*(2*3.14/1196);
-	  angular_z_now = (right_sppms - left_sppms)*(0.1651/0.355)*(2*3.14/1196);
+	  // calculate speed
+
+	  left_pwm = speed_const*left_SpeedSetpoint + left_PIDOut;
+	  right_pwm = speed_const*right_SpeedSetpoint + right_PIDOut;
+
+
 
 	  // Motors
 
-	  DC_MOTOR_Start( DC_MOTOR_CfgParam[0],
-			  	  	  left_PIDOut < 0 ? DIR_ACW : DIR_CW,
-					  left_PIDOut < 0 ? -left_PIDOut : left_PIDOut);
-
 	  DC_MOTOR_Start( DC_MOTOR_CfgParam[1],
-			  	  	  right_PIDOut < 0 ? DIR_ACW : DIR_CW,
-			  	  	  right_PIDOut < 0 ? -right_PIDOut : right_PIDOut);
+			  	  	  left_pwm < 0 ? DIR_ACW : DIR_CW,
+	  				  left_pwm < 0 ? -left_pwm : left_pwm);
 
-if(right_ppms==0 && left_ppms ==0){
-			char packet[5];
-		   sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
-
-		    sen_buff[0] = (uint8_t)0;
-		    sen_buff[1] = (uint8_t)0;
-		    sen_buff[2] = (uint8_t)0;
-			sen_buff[3] = (uint8_t) packet[0];
-			sen_buff[4] = (uint8_t) packet[1];
-			sen_buff[5] = (uint8_t) packet[2];
-			sen_buff[6] = (uint8_t) packet[3];
-			sen_buff[7] = (uint8_t) packet[4];
-			sen_buff[8] = (uint8_t) packet[5];
-}
-else if((right_ppms>=0 && left_ppms>0) || (right_ppms>0 && left_ppms>=0) ){
-	  char packet[6];
-	  sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
-
-	    sen_buff[0] = (uint8_t)0;
-	    sen_buff[1] = (uint8_t)0;
-	    sen_buff[2] = (uint8_t)packet[0];
-		sen_buff[3] = (uint8_t) packet[1];
-		sen_buff[4] = (uint8_t) packet[2];
-		sen_buff[5] = (uint8_t) packet[3];
-		sen_buff[6] = (uint8_t) packet[4];
-		sen_buff[7] = (uint8_t) packet[5];
-		sen_buff[8] = (uint8_t) packet[6];
-
-
-}
-
-else if(right_ppms<0 && left_ppms<0){
-	  char packet[8];
-	  sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
-
-
-		sen_buff[0] = (uint8_t) packet[0];
-		sen_buff[1] = (uint8_t) packet[1];
-		sen_buff[2] = (uint8_t) packet[2];
-		sen_buff[3] = (uint8_t) packet[3];
-		sen_buff[4] = (uint8_t) packet[4];
-		sen_buff[5] = (uint8_t) packet[5];
-		sen_buff[6] = (uint8_t) packet[6];
-		sen_buff[7] = (uint8_t) packet[7];
-		sen_buff[8] = (uint8_t) packet[8];
-
-}
-
-else {
-	 char packet[7];
-	 sprintf(packet,"%d,%d\n",left_ppms,right_ppms);
-
-
-			sen_buff[0] = (uint8_t) 0;
-			sen_buff[1] = (uint8_t) packet[0];
-			sen_buff[2] = (uint8_t) packet[1];
-			sen_buff[3] = (uint8_t) packet[2];
-			sen_buff[4] = (uint8_t) packet[3];
-			sen_buff[5] = (uint8_t) packet[4];
-			sen_buff[6] = (uint8_t) packet[5];
-			sen_buff[7] = (uint8_t) packet[6];
-			sen_buff[8] = (uint8_t) packet[7];
-
-
-}
+	  DC_MOTOR_Start( DC_MOTOR_CfgParam[0],
+	  		  	  	  right_pwm < 0 ? DIR_ACW : DIR_CW,
+	  				  right_pwm < 0 ? -right_pwm : right_pwm);
 
 
 
-      char rec_buff[100];
+	  // generate odometry buffer
+
+
+
 	  sscanf(rec_buff,"%d,%d\n",&linear_x_rec,&angular_z_rec);
-
-
-
-
 	  vcp_recv((uint8_t *)&rec_buff,sizeof(rec_buff));
 
-	  vcp_send(
-			  (uint8_t *)&sen_buff,
-			  sizeof(sen_buff)
-			  );
+	  sprintf(sen_buff,"%d,%d\n",left_ppms,right_ppms);
+	  vcp_send((uint8_t *)&sen_buff,sizeof(sen_buff));
 
 
   }
